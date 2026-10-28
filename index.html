@@ -85,12 +85,12 @@
 
   /* balls */
   .ball{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;flex:none;cursor:pointer;
-    font:700 12px 'Orbitron','Noto Sans KR',sans-serif;color:#111;position:relative;
+    font:900 13px 'Orbitron','Noto Sans KR',sans-serif;color:#000;position:relative;
     background:radial-gradient(circle at 34% 30%,rgba(255,255,255,.9) 0 8%,transparent 30%),var(--bc);
     box-shadow:inset -4px -5px 8px rgba(0,0,0,.28),0 0 12px color-mix(in srgb,var(--bc) 45%,transparent)}
-  .ball::after{content:'';position:absolute;inset:6px;border-radius:50%;background:rgba(255,255,255,.88);z-index:0}
+  .ball::after{content:'';position:absolute;inset:5px;border-radius:50%;background:#fff;z-index:0}
   .ball span{position:relative;z-index:1}
-  .ball.sm{width:22px;height:22px;font-size:9px}.ball.sm::after{inset:4px}
+  .ball.sm{width:24px;height:24px;font-size:10px}.ball.sm::after{inset:3px}
   .ball.lg{width:48px;height:48px;font-size:17px}.ball.lg::after{inset:9px}
   .c1{--bc:var(--b1)}.c2{--bc:var(--b2)}.c3{--bc:var(--b3)}.c4{--bc:var(--b4)}.c5{--bc:var(--b5)}
   .ball.hit{outline:2px solid #fff;outline-offset:2px}
@@ -462,7 +462,7 @@ controls.maxPolarAngle = Math.PI * 0.62
 controls.target.set(0, -1, 0)
 const composer = new EffectComposer(renderer)
 composer.addPass(new RenderPass(scene, camera))
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.45, 0.93)
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.7, 0.4, 0.97)
 composer.addPass(bloom)
 composer.addPass(new OutputPass())
 
@@ -579,16 +579,20 @@ const base = new THREE.Group(); base.position.y = -R - 2.2; machine.add(base)
 
 // 로또공
 function ballTexture(n) {
-  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256
+  const W = 1024, H = 512
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H
   const x = cv.getContext('2d')
-  x.fillStyle = CSSCOL[colorCls(n)]; x.fillRect(0, 0, 512, 256)
-  for (const cx of [128, 384]) {
-    x.fillStyle = '#efefef'; x.beginPath(); x.arc(cx, 128, 56, 0, Math.PI * 2); x.fill()
-    x.fillStyle = '#121212'; x.font = '900 66px Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'
-    x.fillText(String(n), cx, 132)
-    if (n === 6 || n === 9) x.fillRect(cx - 14, 162, 28, 4)
+  x.fillStyle = CSSCOL[colorCls(n)]; x.fillRect(0, 0, W, H)
+  for (const cx of [W * 0.25, W * 0.75]) {
+    x.fillStyle = '#ffffff'; x.beginPath(); x.arc(cx, H / 2, 128, 0, Math.PI * 2); x.fill()
+    x.lineWidth = 7; x.strokeStyle = 'rgba(0,0,0,.18)'; x.stroke()
+    const fs = n >= 10 ? 150 : 172
+    x.font = `900 ${fs}px "Arial Black", Arial, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle'
+    x.lineJoin = 'round'; x.lineWidth = 10; x.strokeStyle = '#000'; x.strokeText(String(n), cx, H / 2 + 8)
+    x.fillStyle = '#000'; x.fillText(String(n), cx, H / 2 + 8)
+    if (n === 6 || n === 9) x.fillRect(cx - 30, H / 2 + 92, 60, 10)
   }
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); return t
 }
 const ballGeo = new THREE.SphereGeometry(BR, 48, 32)
 const balls = []
@@ -629,8 +633,9 @@ function layoutView() {
   const spacing = Math.min(0.98, (freeW / pxPerUnit) * 0.86 / 6)
   const sc = spacing / 0.98
   trayBottomPx = (mobile ? (open ? h * 0.58 + 74 : 78) : 30) + 0.435 * sc * pxPerUnit
-  const yUnits = -halfH + (trayBottomPx + (mobile ? -shiftY * 0 : 0)) / pxPerUnit
-  slots.forEach((s, i) => { s.position.set((i - 2.5) * spacing, yUnits + shiftY / pxPerUnit * 0, -TRAY_DIST); s.scale.setScalar(sc) })
+  // viewOffset(shiftY)만큼 장면이 위로 올라가므로 그만큼 빼서 HTML 버튼 아래 정확히 놓이게 함
+  const yUnits = -halfH + (trayBottomPx - shiftY) / pxPerUnit
+  slots.forEach((s, i) => { s.position.set((i - 2.5) * spacing, yUnits, -TRAY_DIST); s.scale.setScalar(sc) })
   trayGroup.userData.sc = sc
   const t = $('#tray')
   t.style.left = (w / 2 + shiftX) + 'px'
@@ -1120,6 +1125,10 @@ function physics(dt, raw) {
       if (r > RIN + 0.4) { p.lerp(tmpA.copy(p).setLength(RIN - 2), 0.06); b.v.multiplyScalar(0.5) }
       else free.push(b)
     }
+    const inTray = b.tray >= 0 && b.flyT > 0.85
+    b.mat.envMapIntensity += ((inTray ? 0.08 : 0.35) - b.mat.envMapIntensity) * 0.2
+    b.mat.clearcoat += ((inTray ? 0.15 : 1) - b.mat.clearcoat) * 0.2
+    b.mat.roughness += ((inTray ? 0.6 : 0.32) - b.mat.roughness) * 0.2
     b.scale += (targetScale - b.scale) * 0.12
     const boost = n === selected ? 1.18 : n === hovered ? 1.1 : 1
     b.mesh.scale.setScalar(b.scale * boost)
