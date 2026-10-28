@@ -137,6 +137,13 @@
   .strat b{display:block;font-size:12px}
   .strat span{font-size:10px;color:var(--dim);line-height:1.45;display:block;margin-top:3px}
   .strat.on{border-color:var(--cy);background:rgba(94,242,255,.09)}
+  .sgroup{grid-column:1/-1;font-size:10px;color:var(--dim);letter-spacing:.14em;margin:8px 0 0}
+  .sgroup:first-child{margin-top:0}
+  canvas.ma{width:100%;height:84px;display:block;margin-top:2px}
+  .malegend{display:flex;gap:10px;flex-wrap:wrap;font-size:10px;margin-top:4px}
+  .sig{margin-top:6px;font-size:11px;font-weight:700;color:#cfe9ff}
+  .sig.up{color:var(--am)} .sig.down{color:var(--cy)}
+  #info{max-height:calc(100vh - 170px);overflow:auto}
   .strat.on b{color:var(--cy)}
   .chk{font-size:11px;color:#c3d3e6;display:flex;align-items:center;gap:7px;margin-top:9px}
   .chk input{accent-color:var(--cy)}
@@ -198,7 +205,7 @@
     #status{top:auto;bottom:auto;right:12px;top:62px;padding:6px 2px} #status > div{padding:0 10px} #status b{font-size:12px}
     #modes{top:14px;right:12px} #modes button{padding:6px 10px;font-size:11px}
     #panel{left:6px;right:6px;top:auto;bottom:68px;width:auto;height:58vh;transform:translateY(calc(100% + 80px))}
-    #info{left:10px;right:10px;width:auto;top:112px}
+    #info{left:10px;right:10px;width:auto;top:112px;max-height:calc(100vh - 190px)}
   }
 </style>
 </head>
@@ -269,6 +276,10 @@
     <div class="cap">점선은 고르게 나왔을 때의 기댓값이에요 · 막대를 누르면 해당 번호 정보</div>
     <h3>많이 나온 번호</h3><div class="row" id="hotRow"></div>
     <h3>오래 쉰 번호</h3><div class="row" id="coldRow"></div>
+    <h3>이동평균 신호 <em>7회선 · 15회선 · 30회선</em></h3>
+    <div class="cap" style="margin:0 0 6px">골든크로스: 최근 5회 안에 7회선이 30회선을 뚫고 올라간 번호</div><div class="row" id="sigGolden"></div>
+    <div class="cap" style="margin:10px 0 6px">정배열 상승: 7회선 &gt; 15회선 &gt; 30회선</div><div class="row" id="sigUp"></div>
+    <div class="cap" style="margin:10px 0 6px">눌림목: 30회선은 평균보다 강한데 최근 7회 잠잠한 번호</div><div class="row" id="sigDip"></div>
     <h3>홀수 개수 분포</h3><canvas class="chart s" id="oddChart"></canvas>
     <h3>당첨번호 합계 분포</h3><canvas class="chart s" id="sumChart"></canvas>
     <h3>회차 타임라인</h3>
@@ -361,7 +372,13 @@ const W = {
   hot: n => Math.pow(S.recent50[n] + 1, 3),
   cold: n => Math.pow(S.gap[n], 2.2),
   pair: (n, ch) => ch.length ? 1 + ch.reduce((s, m) => s + S.pair[n][m], 0) ** 1.4 : S.freq[n],
-  rare: n => (n > 31 ? 3 : 1) * (n % 10 === 7 || n % 5 === 0 ? 0.6 : 1)
+  rare: n => (n > 31 ? 3 : 1) * (n % 10 === 7 || n % 5 === 0 ? 0.6 : 1),
+  random: () => 1,
+  ma30: n => Math.pow(MA.c30[n] + 0.3, 2.5),
+  ma15: n => Math.pow(MA.c15[n] + 0.3, 2.5),
+  ma7: n => Math.pow(MA.c7[n] + 0.3, 2.5),
+  golden: n => (goldenNow(n) || momentum(n) > 0) ? Math.exp(25 * momentum(n)) * (goldenNow(n) ? 3 : 1) : 0.03,
+  dip: n => dipNow(n) ? Math.exp(10 * (r30(n) - r7(n)) + 8 * (r30(n) - BASE_RATE)) * 3 : 0.05
 }
 function balanced(nums) {
   const odd = nums.filter(n => n % 2).length, sum = nums.reduce((a, b) => a + b, 0)
@@ -384,6 +401,39 @@ function rankOf(nums, d) {
 }
 const AVG50 = 50 * 6 / 45, AVG_PAIR = DRAWS.length * 15 / 990
 const AVG_SUM = DRAWS.reduce((a, d) => a + d.nums.reduce((x, y) => x + y, 0), 0) / DRAWS.length
+/* 이동평균 (주식 이동평균선처럼 최근 7·15·30회 출현율) */
+const BASE_RATE = 6 / 45
+const MA = (() => {
+  const N = DRAWS.length, pre = Array.from({ length: 46 }, () => new Int16Array(N + 1))
+  DRAWS.forEach((d, j) => { for (let n = 1; n <= 45; n++) pre[n][j + 1] = pre[n][j]; for (const n of d.nums) pre[n][j + 1]++ })
+  const cnt = (n, end, k) => pre[n][end] - pre[n][Math.max(0, end - k)]
+  const LEN = 60, series = [], c7 = Array(46).fill(0), c15 = Array(46).fill(0), c30 = Array(46).fill(0), cross = Array(46).fill(-1)
+  for (let n = 1; n <= 45; n++) {
+    const m7 = [], m15 = [], m30 = [], hit = []
+    for (let i = 0; i < LEN; i++) {
+      const end = N - LEN + 1 + i
+      m7.push(cnt(n, end, 7) / 7); m15.push(cnt(n, end, 15) / 15); m30.push(cnt(n, end, 30) / 30); hit.push(DRAWS[end - 1].nums.includes(n))
+    }
+    series[n] = { m7, m15, m30, hit, from: DRAWS[N - LEN].no }
+    c7[n] = cnt(n, N, 7); c15[n] = cnt(n, N, 15); c30[n] = cnt(n, N, 30)
+    for (let i = LEN - 1; i > 0; i--) if (m7[i] > m30[i] && m7[i - 1] <= m30[i - 1]) { cross[n] = LEN - 1 - i; break }
+  }
+  return { series, c7, c15, c30, cross }
+})()
+const r7 = n => MA.c7[n] / 7, r15 = n => MA.c15[n] / 15, r30 = n => MA.c30[n] / 30
+const momentum = n => 0.6 * r7(n) + 0.4 * r15(n) - r30(n)
+const goldenNow = n => MA.cross[n] >= 0 && MA.cross[n] <= 5 && r7(n) > r30(n)
+const upTrend = n => r7(n) > r15(n) && r15(n) > r30(n)
+const dipNow = n => r30(n) > BASE_RATE && r7(n) < r30(n)
+function maSignal(n) {
+  if (goldenNow(n)) return { t: `골든크로스 (${MA.cross[n] === 0 ? '이번 회차' : MA.cross[n] + '회 전'})`, cls: 'up' }
+  if (upTrend(n)) return { t: '정배열 상승 (7회선 > 15회선 > 30회선)', cls: 'up' }
+  if (dipNow(n)) return { t: '눌림목 (장기 강세, 단기 휴식)', cls: 'down' }
+  if (r7(n) < r15(n) && r15(n) < r30(n)) return { t: '역배열 하락 (7회선 < 15회선 < 30회선)', cls: 'down' }
+  if (r7(n) > r30(n)) return { t: '단기 강세 (7회선이 30회선 위)', cls: 'up' }
+  if (r7(n) < r30(n)) return { t: '단기 약세 (7회선이 30회선 아래)', cls: 'down' }
+  return { t: '횡보', cls: '' }
+}
 function summaryHTML(nums) {
   const s = simulate(nums)
   const zones = [0, 0, 0, 0, 0]; nums.forEach(n => zones[Math.min(4, Math.floor((n - 1) / 10))]++)
@@ -420,6 +470,18 @@ function reasonFor(n, role, nums) {
     return `${best}번과 함께 ${SALL.pair[n][best]}회 당첨 (번호쌍 평균 ${AVG_PAIR.toFixed(1)}회)`
   }
   if (role === 'rand') return `무작위 선택 · 역대 ${f}회 출현 · ${rest}`
+  if (role === 'random') return `완전 무작위 선택 · 역대 ${f}회 출현 · ${rest}`
+  if (role === 'pin') return '직접 고정한 번호'
+  if (role === 'rare') return n > 31 ? '32 이상 번호 · 생일(1~31)로 고르는 사람이 적은 구간' : `역대 ${f}회 출현 · ${rest}`
+  if (role === 'ma30' || role === 'ma15' || role === 'ma7') {
+    const k = +role.slice(2), c = MA['c' + k][n]
+    return `최근 ${k}회 중 ${c}번 출현 (평균 ${(k * 6 / 45).toFixed(1)}번)`
+  }
+  if (role === 'golden') {
+    const tag = goldenNow(n) ? ` · ${MA.cross[n] === 0 ? '이번 회차' : MA.cross[n] + '회 전'} 골든크로스` : (r7(n) > r30(n) ? ' · 7회선이 30회선 위' : '')
+    return `최근 7회 ${MA.c7[n]}번 · 15회 ${MA.c15[n]}번 · 30회 ${MA.c30[n]}번${tag}`
+  }
+  if (role === 'dip') return `30회 중 ${MA.c30[n]}번 (평균 4.0번) · 최근 7회 ${MA.c7[n]}번${dipNow(n) ? ' → 쉬어 가는 중' : ''}`
   return `역대 ${f}회 출현 · ${rest}`
 }
 function genWeekLine(id, used) {
@@ -804,6 +866,10 @@ function selectBall(n) {
       <div><span>최근 50회 출현</span><b class="num">${S.recent50[n]}</b></div>
       <div><span>보너스 출현</span><b class="num">${S.bonus[n]}</b></div>
     </div>
+    <div class="sub">이동평균선 · 최근 60회 (${MA.series[n].from}~${LATEST.no}회)</div>
+    <canvas class="ma" id="maChart"></canvas>
+    <div class="malegend"><span style="color:#ffb547">━ 7회선 ${MA.c7[n]}번</span><span style="color:#ff5fa2">━ 15회선 ${MA.c15[n]}번</span><span style="color:#5ef2ff">━ 30회선 ${MA.c30[n]}번</span></div>
+    <div class="sig ${maSignal(n).cls}">신호: ${maSignal(n).t}</div>
     <div class="sub">최근 30회 출현 기록 (오른쪽이 최신)</div>
     <div class="dots">${last30.map(v => `<i class="${v ? 'on' : ''}"></i>`).join('')}</div>
     <div class="sub">함께 자주 나온 번호</div>
@@ -813,6 +879,7 @@ function selectBall(n) {
       <button class="btn" id="exBtn" style="${excludes.has(n) ? 'color:var(--mg);border-color:var(--mg)' : ''}">${excludes.has(n) ? '제외 해제' : '추천에서 제외'}</button>
     </div>`
   box.classList.add('show')
+  drawMA(box.querySelector('#maChart'), n)
   box.querySelector('.x').onclick = () => selectBall(0)
   box.querySelectorAll('.row .ball').forEach(b => b.onclick = () => selectBall(+b.dataset.n))
   box.querySelector('#pinBtn').onclick = () => {
@@ -882,15 +949,23 @@ $('#copyWeek').onclick = () => {
 
 /* 직접 뽑기 */
 const STRATS = [
-  { id: 'balance', name: '균형형', desc: '완전 무작위 + 균형 필터' },
-  { id: 'hot', name: '많이 나온 번호', desc: '최근 50회에 자주 나온 번호 가중' },
-  { id: 'cold', name: '오래 쉰 번호', desc: '오래 안 나온 번호일수록 가중' },
-  { id: 'pair', name: '궁합 별자리', desc: '함께 자주 나온 번호끼리 연결' },
-  { id: 'mix', name: '하이브리드', desc: '많이 나온 2 · 오래 쉰 2 · 무작위 2' },
-  { id: 'rare', name: '비인기 조합', desc: '사람들이 덜 고르는 번호 위주. 당첨 시 나눠 갖는 사람이 적음' }
+  { group: '기본 전략' },
+  { id: 'balance', name: '균형형', desc: '무작위 + 균형 필터', why: '모든 번호를 같은 확률로 뽑되, 역대 당첨번호에서 흔한 모양만 남겼어요.' },
+  { id: 'random', name: '완전 무작위', desc: '아무 조건 없이 1~45 중 6개. 필터도 적용 안 함', why: '통계도 필터도 없이 1~45에서 6개를 그냥 뽑았어요. 사실 수학적으로는 모든 전략과 당첨 확률이 똑같아요.' },
+  { id: 'hot', name: '많이 나온 번호', desc: '최근 50회에 자주 나온 번호 가중', why: '최근 50회 동안 자주 나온 번호에 가중치를 줬어요.' },
+  { id: 'cold', name: '오래 쉰 번호', desc: '오래 안 나온 번호일수록 가중', why: '오랫동안 안 나온 번호일수록 가중치를 줬어요.' },
+  { id: 'pair', name: '궁합 별자리', desc: '함께 자주 나온 번호끼리 연결', why: '역대 당첨번호에서 함께 자주 나온 번호끼리 이어 붙였어요.' },
+  { id: 'mix', name: '하이브리드', desc: '많이 나온 2 · 오래 쉰 2 · 무작위 2', why: '많이 나온 번호 2개, 오래 쉰 번호 2개, 무작위 2개를 섞었어요.' },
+  { id: 'rare', name: '비인기 조합', desc: '사람들이 덜 고르는 번호 위주. 당첨 시 나눠 갖는 사람이 적음', why: '생일 번호(1~31)를 피해 32 이상을 많이 넣었어요. 당첨되면 나눠 갖는 사람이 적을 수 있어요.' },
+  { group: '이동평균 전략 (주식 차트처럼)' },
+  { id: 'ma30', name: '30회선 추세', desc: '최근 30회 자주 나온 번호 (장기 추세)', why: '주식 30일선처럼 최근 30회 출현 횟수가 많은 번호에 가중치를 줬어요.' },
+  { id: 'ma15', name: '15회선 추세', desc: '최근 15회 자주 나온 번호 (중기 추세)', why: '주식 15일선처럼 최근 15회 출현 횟수가 많은 번호에 가중치를 줬어요.' },
+  { id: 'ma7', name: '7회선 추세', desc: '최근 7회 자주 나온 번호 (단기 추세)', why: '주식 7일선처럼 최근 7회 출현 횟수가 많은 번호에 가중치를 줬어요.' },
+  { id: 'golden', name: '골든크로스', desc: '7회선이 30회선을 뚫고 올라간, 요즘 뜨는 번호', why: '단기선(7회)이 장기선(30회)보다 높아진 번호, 특히 최근 5회 안에 골든크로스가 난 번호에 가중치를 줬어요.' },
+  { id: 'dip', name: '눌림목', desc: '30회선은 강한데 최근 7회 잠잠한 번호', why: '장기(30회)로는 자주 나왔는데 최근 7회에 쉬고 있는 번호를 골랐어요. 주식의 눌림목 매수처럼 반등을 기대하는 관점이에요.' }
 ]
-let strat = 'balance', lastGames = []
-$('#strats').innerHTML = STRATS.map(s => `<button class="strat ${s.id === strat ? 'on' : ''}" data-id="${s.id}"><b>${s.name}</b><span>${s.desc}</span></button>`).join('')
+let strat = 'balance', lastGames = [], lastRoles = [], lastStrat = ''
+$('#strats').innerHTML = STRATS.map(s => s.group ? `<div class="sgroup">${s.group}</div>` : `<button class="strat ${s.id === strat ? 'on' : ''}" data-id="${s.id}"><b>${s.name}</b><span>${s.desc}</span></button>`).join('')
 document.querySelectorAll('.strat').forEach(b => b.onclick = () => { strat = b.dataset.id; document.querySelectorAll('.strat').forEach(x => x.classList.toggle('on', x === b)) })
 function renderPins() {
   const r = $('#pinRow')
@@ -902,27 +977,27 @@ function renderPins() {
 }
 renderPins()
 function genOne() {
-  const pool = ALL_NUMS.filter(n => !excludes.has(n))
+  const pool = ALL_NUMS.filter(n => !excludes.has(n)), pure = strat === 'random'
   for (let tries = 0; tries < 3000; tries++) {
-    const nums = [...pins]
-    if (strat === 'mix') {
-      nums.push(...weightedPick(pool, W.hot, Math.min(2, 6 - nums.length), nums))
-      nums.push(...weightedPick(pool, W.cold, Math.min(2, 6 - nums.length), nums))
-      nums.push(...weightedPick(pool, W.balance, 6 - nums.length, nums))
-    } else nums.push(...weightedPick(pool, W[strat], 6 - nums.length, nums))
+    const nums = [...pins], roles = {}
+    pins.forEach(n => roles[n] = 'pin')
+    const add = (w, k, role) => { for (const n of weightedPick(pool, w, k, nums)) { nums.push(n); roles[n] = role } }
+    if (strat === 'mix') { add(W.hot, Math.min(2, 6 - nums.length), 'hot'); add(W.cold, Math.min(2, 6 - nums.length), 'cold'); add(W.balance, 6 - nums.length, 'rand') }
+    else add(W[strat], 6 - nums.length, strat)
     if (nums.length < 6) return null
     nums.sort((a, b) => a - b)
-    if ($('#fBalance').checked && tries < 2500 && !balanced(nums)) continue
-    if ($('#fPast').checked && PAST_KEYS.has(nums.join('-'))) continue
-    return nums
+    if (!pure && $('#fBalance').checked && tries < 2500 && !balanced(nums)) continue
+    if (!pure && $('#fPast').checked && PAST_KEYS.has(nums.join('-'))) continue
+    return { nums, roles }
   }
   return null
 }
 $('#genBtn').onclick = () => {
   const k = +$('#nGames').value, games = []
-  for (let i = 0; i < k; i++) { const g = genOne(); if (g) games.push(g) }
+  const seen = new Set()
+  for (let i = 0; i < k; i++) { for (let t = 0; t < 40; t++) { const g = genOne(); if (!g) break; const key = g.nums.join('-'); if (seen.has(key)) continue; seen.add(key); games.push(g); break } }
   if (!games.length) return toast('조건이 너무 까다로워요. 고정이나 제외를 줄여 주세요')
-  lastGames = games; renderGames(); drawGame(0)
+  lastGames = games.map(g => g.nums); lastRoles = games.map(g => g.roles); lastStrat = strat; renderGames(); drawGame(0)
 }
 function renderGames() {
   $('#shareBtn').style.display = lastGames.length ? '' : 'none'
@@ -930,6 +1005,8 @@ function renderGames() {
     <div class="card" data-i="${i}">
       <div class="top"><span class="lno">${i + 1}줄</span>${g.map(n => ballHTML(n)).join('')}
         <div class="tools"><button data-a="save" title="저장">☆</button><button data-a="copy" title="복사">⧉</button></div></div>
+      ${lastRoles[i] ? (() => { const st = STRATS.find(s => s.id === lastStrat) || {}; return `<div class="name">${st.name || ''}<i>근거</i></div><div class="why">${st.why || ''}</div>
+      <details><summary>번호별 근거 보기</summary><div class="reasons">${g.map(n => `<div>${ballHTML(n, 'sm')}<span>${reasonFor(n, lastRoles[i][n], g)}</span></div>`).join('')}</div></details>` })() : ''}
       <div class="meta">${summaryHTML(g)}</div>
     </div>`).join('')
   document.querySelectorAll('#games .card').forEach(el => {
@@ -938,13 +1015,14 @@ function renderGames() {
       const a = e.target.closest('[data-a]')?.dataset.a
       if (a === 'save') { saveMine(lastGames[i]); e.target.textContent = '★'; return }
       if (a === 'copy') { navigator.clipboard?.writeText(lastGames[i].join(', ')); return toast('복사했어요') }
+      if (e.target.closest('details')) return
       drawGame(i)
     }
   })
 }
 function drawGame(i) {
   document.querySelectorAll('#games .card').forEach(el => el.classList.toggle('sel', +el.dataset.i === i))
-  drawLine(lastGames[i], `직접 뽑은 ${i + 1}줄 · ${STRATS.find(s => s.id === strat)?.name || ''}`)
+  drawLine(lastGames[i], `직접 뽑은 ${i + 1}줄${lastStrat ? ' · ' + (STRATS.find(s => s.id === lastStrat)?.name || '') : ''}`)
 }
 $('#shareBtn').onclick = () => {
   const url = new URL(location.href); url.hash = 'g=' + lastGames.map(g => g.join('.')).join(',')
@@ -998,6 +1076,21 @@ function setupCanvas(cv) {
   cv.width = r.width * dpr; cv.height = r.height * dpr
   const x = cv.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); return [x, r.width, r.height]
 }
+function drawMA(cv, n) {
+  if (!cv) return
+  const [x, w, h] = setupCanvas(cv), s = MA.series[n], L = s.m7.length
+  const max = Math.max(0.36, ...s.m7, ...s.m15, ...s.m30) * 1.08
+  const X = i => 4 + i / (L - 1) * (w - 8), Y = v => h - 12 - v / max * (h - 18)
+  x.clearRect(0, 0, w, h)
+  x.setLineDash([3, 3]); x.strokeStyle = 'rgba(255,255,255,.35)'; x.lineWidth = 1
+  x.beginPath(); x.moveTo(0, Y(BASE_RATE)); x.lineTo(w, Y(BASE_RATE)); x.stroke(); x.setLineDash([])
+  x.fillStyle = 'rgba(255,255,255,.45)'; x.font = '9px "Noto Sans KR", sans-serif'; x.textAlign = 'left'; x.fillText('평균', 4, Y(BASE_RATE) - 3)
+  for (const [arr, col, lw] of [[s.m30, '#5ef2ff', 1.8], [s.m15, '#ff5fa2', 1.5], [s.m7, '#ffb547', 2]]) {
+    x.strokeStyle = col; x.lineWidth = lw; x.beginPath()
+    arr.forEach((v, i) => i ? x.lineTo(X(i), Y(v)) : x.moveTo(X(i), Y(v))); x.stroke()
+  }
+  s.hit.forEach((v, i) => { if (v) { x.fillStyle = '#fff'; x.fillRect(X(i) - 1.5, h - 6, 3, 5) } })
+}
 function drawFreq() {
   const cv = $('#freqChart'); if (!cv.offsetWidth) return
   const [x, w, h] = setupCanvas(cv), floor = Math.floor(S.min * 0.8), max = S.max * 1.04 - floor, bw = w / 45
@@ -1032,6 +1125,10 @@ function renderExplore() {
   $('#hotRow').innerHTML = byF.slice(0, 6).map(n => ballHTML(n)).join('') + `<span style="font-size:10px;color:var(--dim)">${S.freq[byF[5]]}~${S.freq[byF[0]]}회 출현</span>`
   const byG = ALL_NUMS.slice().sort((a, b) => S.gap[b] - S.gap[a])
   $('#coldRow').innerHTML = byG.slice(0, 6).map(n => ballHTML(n)).join('') + `<span style="font-size:10px;color:var(--dim)">${S.gap[byG[5]]}~${S.gap[byG[0]]}회째 쉬는 중</span>`
+  const sigRow = (id, list) => { $(id).innerHTML = list.length ? list.slice(0, 10).map(n => ballHTML(n)).join('') : '<span style="font-size:11px;color:var(--dim)">해당 번호 없음</span>' }
+  sigRow('#sigGolden', ALL_NUMS.filter(goldenNow).sort((a, b) => momentum(b) - momentum(a)))
+  sigRow('#sigUp', ALL_NUMS.filter(upTrend).sort((a, b) => momentum(b) - momentum(a)))
+  sigRow('#sigDip', ALL_NUMS.filter(dipNow).sort((a, b) => (r30(b) - r7(b)) - (r30(a) - r7(a))))
   const odd = Array(7).fill(0); S.sub.forEach(d => odd[d.nums.filter(n => n % 2).length]++)
   drawHist('#oddChart', odd, odd.map((_, i) => i + '개'), i => i >= 2 && i <= 4)
   const bins = Array(14).fill(0); S.sub.forEach(d => { const s = d.nums.reduce((a, b) => a + b, 0); bins[Math.min(13, Math.max(0, Math.floor((s - 40) / 17)))]++ })
@@ -1085,7 +1182,7 @@ tickCountdown(); setInterval(tickCountdown, 1000)
   const m = location.hash.match(/g=([\d.,]+)/)
   if (m) {
     lastGames = m[1].split(',').map(s => s.split('.').map(Number)).filter(g => g.length === 6 && g.every(n => n >= 1 && n <= 45))
-    if (lastGames.length) { switchTab('rec'); renderGames(); setTimeout(() => drawGame(0), 2200); toast('공유받은 번호를 불러왔어요') }
+    if (lastGames.length) { lastRoles = []; lastStrat = ''; switchTab('rec'); renderGames(); setTimeout(() => drawGame(0), 2200); toast('공유받은 번호를 불러왔어요') }
   }
 }
 if (innerWidth <= 760) document.body.classList.remove('open')
