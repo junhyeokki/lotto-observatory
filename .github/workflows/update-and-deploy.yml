@@ -1,0 +1,52 @@
+# 로또 당첨번호를 갱신하고 GitHub Pages에 배포합니다.
+name: 로또 데이터 갱신 및 배포
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 13 * * 6'   # 매주 토요일 22:00 (한국 시간)
+    - cron: '0 0 * * 0'    # 매주 일요일 09:00 (한국 시간) 한 번 더 확인
+  workflow_dispatch:        # Actions 탭에서 직접 실행
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 새 당첨번호 가져오기
+        run: node scripts/update-lotto.mjs draws.json
+        continue-on-error: true   # 실패해도 기존 데이터로 배포는 계속
+
+      - name: 바뀐 데이터 저장
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add draws.json
+          git diff --cached --quiet || (git commit -m "당첨번호 자동 갱신" && git push)
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
